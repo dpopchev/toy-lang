@@ -1,8 +1,11 @@
 /**
  * ToyLang parser & validator.
  *
- * Produces a flat list of Diagnostic objects (zero-based line/char positions)
- * that map 1-to-1 onto the LSP Diagnostic type.
+ * Produces a ParseResult containing:
+ *  - diagnostics   flat list of ToyDiagnostic (maps 1-to-1 to LSP Diagnostic)
+ *  - definitions   map from variable name → Span of the binding `let` token
+ *  - uses          map from variable name → list of Spans where the var is referenced
+ *  - inferredValues map from variable name → human-readable formatted value string
  *
  * Diagnostic codes mirror the spec in 03-diagnostics.md.
  */
@@ -18,6 +21,16 @@ export interface ToyDiagnostic {
   message: string;
   severity: 'error' | 'warning';
   span: Span;
+}
+
+export interface ParseResult {
+  diagnostics:    ToyDiagnostic[];
+  /** name → span of the identifier token in its defining `let` statement */
+  definitions:    Map<string, Span>;
+  /** name → every span where the variable is referenced (print / if) */
+  uses:           Map<string, Span[]>;
+  /** name → formatted output string as the evaluator would produce */
+  inferredValues: Map<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -49,13 +62,11 @@ function tokeniseLine(line: string, lineIdx: number): Token[] {
       ({ kind, value, line: lineIdx, col: i });
 
     if (/[0-9]/.test(ch)) {
-      // Peek ahead: multi-digit number?
       let j = i + 1;
       while (j < line.length && /[0-9]/.test(line[j])) j++;
       tokens.push(tok(j - i > 1 ? 'UNKNOWN' : 'DIGIT', line.slice(i, j)));
       i = j;
     } else if (/[a-zA-Z]/.test(ch)) {
-      // keyword or identifier
       let j = i;
       while (j < line.length && /[a-zA-Z0-9_]/.test(line[j])) j++;
       const word = line.slice(i, j);
@@ -87,11 +98,39 @@ function lineSpan(lineIdx: number, lineText: string): Span {
 }
 
 // ---------------------------------------------------------------------------
+// Expression formatter  (mirrors 02-semantics.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * Given the digit tokens of an expression, return the formatted value string
+ * exactly as the ToyLang evaluator would print it.
+ */
+function formatExpr(digitTokens: Token[], op: 'PLUS' | 'STAR' | null): string {
+  const digits = digitTokens.filter(t => t.kind === 'DIGIT').map(t => t.value);
+  if (digits.length === 0) return '?';
+
+  if (digits.length === 1) {
+    return digits[0] === '0' ? '0' : `COPY ${digits[0]}`;
+  }
+
+  // OR / AND: skip zeros
+  const nonZero = digits.filter(d => d !== '0');
+  if (nonZero.length === 0) return '0';
+
+  const separator = op === 'PLUS' ? ' OR ' : ' AND ';
+  return nonZero.join(separator);
+}
+
+// ---------------------------------------------------------------------------
 // Parser / Validator
 // ---------------------------------------------------------------------------
 
-export function validate(source: string): ToyDiagnostic[] {
+export function validate(source: string): ParseResult {
   const diags: ToyDiagnostic[] = [];
+  const definitions = new Map<string, Span>();
+  const uses        = new Map<string, Span[]>();
+  const inferredValues = new Map<string, string>();
+
   const lines = source.split('\n');
 
   const push = (
@@ -101,20 +140,23 @@ export function validate(source: string): ToyDiagnostic[] {
     s: Span
   ): void => { diags.push({ code, message, severity, span: s }); };
 
+  const addUse = (name: string, s: Span): void => {
+    if (!uses.has(name)) uses.set(name, []);
+    uses.get(name)!.push(s);
+  };
+
   // Symbol table: variable name → line where it was defined
   const defined = new Map<string, number>();
-  // Track which variables are used (for TL102)
-  const used = new Set<string>();
 
-  let insideIf = false;         // are we inside an if-block?
-  let ifBranchCount = 0;        // statements seen inside the current if-body
-  let ifBodyExpected = false;   // expecting the let-body of an if on the NEXT line
-  let elseBodyExpected = false; // expecting the let-body of an else on the NEXT line
+  let insideIf        = false;
+  let ifBranchCount   = 0;
+  let ifBodyExpected  = false;
+  let elseBodyExpected = false;
 
   for (let li = 0; li < lines.length; li++) {
-    const raw = lines[li];
+    const raw     = lines[li];
     const trimmed = raw.trimEnd();
-    if (trimmed === '') continue;  // blank lines are fine
+    if (trimmed === '') continue;
 
     const tokens = tokeniseLine(trimmed, li);
     if (tokens.length === 0) continue;
@@ -127,7 +169,7 @@ export function validate(source: string): ToyDiagnostic[] {
         push('TL011', "Unexpected 'else' without matching 'if'.", 'error', span(first));
       } else {
         elseBodyExpected = true;
-        ifBranchCount = 0;
+        ifBranchCount    = 0;
       }
       continue;
     }
@@ -149,7 +191,7 @@ export function validate(source: string): ToyDiagnostic[] {
         elseBodyExpected = false;
         insideIf = false;
       }
-      // still fall through to parse the let statement
+      // fall through to parse the let statement
     }
 
     // ---------------------------------------------------------------------- IF
@@ -158,7 +200,6 @@ export function validate(source: string): ToyDiagnostic[] {
         push('TL003', "Nested 'if' statements are not allowed.", 'error', span(first));
         continue;
       }
-      // Expect: if IDENT
       if (tokens.length < 2 || tokens[1].kind !== 'IDENT') {
         push('TL001', "Expected a variable after 'if'.", 'error', span(first));
       } else {
@@ -166,7 +207,7 @@ export function validate(source: string): ToyDiagnostic[] {
         if (!defined.has(varTok.value)) {
           push('TL001', `Undefined variable '${varTok.value}'.`, 'error', span(varTok));
         } else {
-          used.add(varTok.value);
+          addUse(varTok.value, span(varTok));
         }
         if (varTok.value.length > 1) {
           push('TL009',
@@ -177,14 +218,12 @@ export function validate(source: string): ToyDiagnostic[] {
             'warning', span(varTok));
         }
       }
-      // Check nothing else on the if-header line
       if (tokens.length > 2) {
-        push('TL010', "Expected newline after statement.", 'error',
-          span(tokens[2]));
+        push('TL010', "Expected newline after statement.", 'error', span(tokens[2]));
       }
-      insideIf = true;
+      insideIf       = true;
       ifBodyExpected = true;
-      ifBranchCount = 0;
+      ifBranchCount  = 0;
       continue;
     }
 
@@ -207,7 +246,7 @@ export function validate(source: string): ToyDiagnostic[] {
           if (!defined.has(varTok.value)) {
             push('TL001', `Undefined variable '${varTok.value}'.`, 'error', span(varTok));
           } else {
-            used.add(varTok.value);
+            addUse(varTok.value, span(varTok));
           }
           if (/[A-Z]/.test(varTok.value)) {
             push('TL101', `Uppercase identifier '${varTok.value}'. Prefer lowercase (a–z).`,
@@ -223,10 +262,8 @@ export function validate(source: string): ToyDiagnostic[] {
 
     // --------------------------------------------------------------------- LET
     if (first.kind === 'LET') {
-      // let IDENT = expr
       let idx = 1;
 
-      // IDENT
       if (idx >= tokens.length || tokens[idx].kind !== 'IDENT') {
         push('TL009', "Expected an identifier after 'let'.", 'error', span(first));
         continue;
@@ -242,7 +279,6 @@ export function validate(source: string): ToyDiagnostic[] {
       }
       idx++;
 
-      // =
       if (idx >= tokens.length || tokens[idx].kind !== 'EQ') {
         push('TL014', "Expected '=' after identifier in 'let' statement.", 'error',
           span(identTok));
@@ -250,30 +286,24 @@ export function validate(source: string): ToyDiagnostic[] {
       }
       idx++;
 
-      // expr
       if (idx >= tokens.length) {
         push('TL008', "Expected an expression after '='.", 'error', span(tokens[idx - 1]));
         continue;
       }
 
-      // Collect expression tokens
       const exprTokens = tokens.slice(idx);
 
-      // Parentheses check
       for (const t of exprTokens) {
         if (t.kind === 'LPAREN' || t.kind === 'RPAREN') {
           push('TL006', 'Parentheses are not allowed in expressions.', 'error', span(t));
         }
       }
-
-      // Multi-digit check
       for (const t of exprTokens) {
         if (t.kind === 'UNKNOWN' && /^[0-9]{2,}$/.test(t.value)) {
           push('TL005', 'Multi-digit numbers are not allowed. Use a single digit (0–9).', 'error', span(t));
         }
       }
 
-      // Mixed operators
       const hasPlus = exprTokens.some(t => t.kind === 'PLUS');
       const hasStar = exprTokens.some(t => t.kind === 'STAR');
       if (hasPlus && hasStar) {
@@ -281,7 +311,6 @@ export function validate(source: string): ToyDiagnostic[] {
           'error', lineSpan(li, trimmed));
       }
 
-      // Trailing operator
       const lastExpr = exprTokens[exprTokens.length - 1];
       if (lastExpr.kind === 'PLUS' || lastExpr.kind === 'STAR') {
         push('TL013',
@@ -289,9 +318,19 @@ export function validate(source: string): ToyDiagnostic[] {
           'error', span(lastExpr));
       }
 
-      // Register definition (even if there were errors, so later uses aren't spuriously undefined)
+      // Register definition and infer value
       if (identTok.value.length === 1) {
+        const defSpan: Span = span(identTok);
         defined.set(identTok.value, li);
+        definitions.set(identTok.value, defSpan);
+
+        // Only infer when expression is valid (no mixed ops, no trailing op)
+        if (!hasPlus || !hasStar) {
+          const op: 'PLUS' | 'STAR' | null =
+            hasPlus ? 'PLUS' : hasStar ? 'STAR' : null;
+          const formatted = formatExpr(exprTokens, op);
+          inferredValues.set(identTok.value, formatted);
+        }
       }
       continue;
     }
@@ -303,11 +342,11 @@ export function validate(source: string): ToyDiagnostic[] {
 
   // ---------------------------------------------------------------- TL102: unused variables
   for (const [name, defLine] of defined.entries()) {
-    if (!used.has(name)) {
+    if (!uses.has(name)) {
       push('TL102', `Variable '${name}' is defined but never used.`,
         'warning', { line: defLine, startChar: 0, endChar: lines[defLine]?.length ?? 0 });
     }
   }
 
-  return diags;
+  return { diagnostics: diags, definitions, uses, inferredValues };
 }
