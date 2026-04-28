@@ -1,0 +1,53 @@
+{
+  "Let statement": {
+    "prefix": "let",
+    "body": ["let ${1:a} = ${2:1}"],
+    "description": "Define a variable"
+  },
+  "Print statement": {
+    "prefix": "print",
+    "body": ["print ${1:a}"],
+    "description": "Print a variable"
+  },
+  "If / else block": {
+    "prefix": "ife",
+    "body": [
+      "if ${1:a}",
+      "let ${2:b} = ${3:1}",
+      "else",
+      "let ${2:b} = ${4:0}"
+    ],
+    "description": "if / else block"
+  },
+  "If without else": {
+    "prefix": "if",
+    "body": [
+      "if ${1:a}",
+      "let ${2:b} = ${3:1}"
+    ],
+    "description": "if without else"
+  },
+  "OR expression": {
+    "prefix": "or",
+    "body": ["let ${1:a} = ${2:1} + ${3:2}"],
+    "description": "OR expression (+ means OR)"
+  },
+  "AND expression": {
+    "prefix": "and",
+    "body": ["let ${1:a} = ${2:1} * ${3:2}"],
+    "description": "AND expression (* means AND)"
+  },
+  "Full program skeleton": {
+    "prefix": "prog",
+    "body": [
+      "let ${1:a} = ${2:1}",
+      "let ${3:b} = ${4:0}",
+      "if ${1:a}",
+      "let ${5:c} = ${6:1}",
+      "else",
+      "let ${5:c} = ${7:0}",
+      "print ${5:c}"
+    ],
+    "description": "Full ToyLang program skeleton"
+  }
+}
