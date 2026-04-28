@@ -1,0 +1,61 @@
+{
+  "name": "toylang-lsp-client",
+  "description": "ToyLang LSP — VS Code client",
+  "version": "0.1.0",
+  "publisher": "dpopchev",
+  "displayName": "ToyLang Language Support",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "toylang",
+        "aliases": ["ToyLang", "toylang"],
+        "extensions": [".tl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "toylang",
+        "scopeName": "source.toylang",
+        "path": "./syntaxes/toylang.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "ToyLang",
+      "properties": {
+        "toylang.maxNumberOfProblems": {
+          "scope": "resource",
+          "type": "number",
+          "default": 100,
+          "description": "Maximum number of diagnostics reported per file."
+        },
+        "toylang.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP communication (useful for debugging)."
+        }
+      }
+    }
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

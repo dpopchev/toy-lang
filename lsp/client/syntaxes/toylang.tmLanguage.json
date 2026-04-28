@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ToyLang",
+  "scopeName": "source.toylang",
+  "patterns": [
+    { "include": "#keywords" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.toylang",
+          "match": "\\b(if|else|print)\\b"
+        },
+        {
+          "name": "keyword.other.toylang",
+          "match": "\\blet\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.toylang",
+          "match": "\\b[0-9]\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.toylang",
+          "match": "[+*=]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.toylang",
+          "match": "\\b[a-zA-Z]\\b"
+        }
+      ]
+    }
+  }
+}
